@@ -4,10 +4,10 @@
 See README.md for setup instructions.
 """
 
-import json
 import os
 import sys
 import warnings
+from dataclasses import dataclass
 from urllib.parse import quote
 
 import requests
@@ -30,6 +30,12 @@ RUNTIME_URL = "https://test.cloud.ibm.com"
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class InstanceConfig:
+    limit: int | None
+    allocation: int | None
+
+
 def require_env(name: str, hint: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -44,11 +50,6 @@ def pause(message: str) -> None:
     input(f"\n{prefixed}\n>>>\n>>> Press Enter to continue... ")
 
 
-# ---------------------------------------------------------------------------
-# Step 1: Exchange API key for IAM bearer token
-# ---------------------------------------------------------------------------
-
-
 def get_iam_token(api_key: str) -> str:
     print("Exchanging API key for IAM bearer token...")
     resp = requests.post(
@@ -60,30 +61,17 @@ def get_iam_token(api_key: str) -> str:
         },
     )
     resp.raise_for_status()
-    token = resp.json()["access_token"]
-    print(f"Got IAM token (length {len(token)}).")
-    return token
+    return resp.json()["access_token"]
 
 
-# ---------------------------------------------------------------------------
-# Step 2: Configure allocation > cycle usage by 5s, with "Set as limit" checked
-# ---------------------------------------------------------------------------
-
-
-def configure_allocation_in_ui() -> None:
+def prompt_to_configure_ui() -> None:
     pause(
-        f"In the IQP UI ({IQP_UI_URL}/instances), set the allocation to be > the "
-        f"'Cycle usage' by 5 seconds (e.g., if usage is 20s, set to 25s).\n\n"
-        f"Also check 'Set as limit'."
+        f"In the IQP UI ({IQP_UI_URL}/instances), set the allocation to be the "
+        f"'Cycle usage'. Also, check 'Set as limit'."
     )
 
 
-# ---------------------------------------------------------------------------
-# Step 3: Verify resource controller reflects the configured allocation/limit
-# ---------------------------------------------------------------------------
-
-
-def fetch_instance_limits(iam_token: str, crn: str) -> dict:
+def fetch_instance(iam_token: str, crn: str) -> InstanceConfig:
     print("\nFetching instance from resource controller...")
     resp = requests.get(
         f"{RC_URL}/{quote(crn, safe='')}",
@@ -94,21 +82,46 @@ def fetch_instance_limits(iam_token: str, crn: str) -> dict:
     )
     resp.raise_for_status()
     extensions = resp.json().get("extensions", {})
-    summary = {
-        "instance_limit_seconds": extensions.get("instance_limit_seconds"),
-        "usage_allocation_seconds": extensions.get("usage_allocation_seconds"),
-    }
-    print(json.dumps(summary, indent=2))
-    return summary
+    config = InstanceConfig(
+        limit=extensions.get("instance_limit_seconds"),
+        allocation=extensions.get("usage_allocation_seconds"),
+    )
+    return config
 
 
-# ---------------------------------------------------------------------------
-# Step 4: Submit a minimal circuit and detect if the usage limit blocked it
-# ---------------------------------------------------------------------------
+def prompt_to_verify_initial_config(config: InstanceConfig) -> None:
+    pause(
+        f"Verify the following values match what you set in the UI:\n"
+        f"  limit:      {config.limit}\n"
+        f"  allocation: {config.allocation}\n"
+        f"If not, fix the UI and rerun."
+    )
 
 
-def submit_job(api_key: str, crn: str) -> bool:
-    """Submit a minimal circuit. Returns True if blocked by the usage limit.
+def patch_allocation(iam_token: str, crn: str, allocation_seconds: int) -> None:
+    print(f"\nPatching allocation to {allocation_seconds}s via resource controller...")
+    resp = requests.patch(
+        f"{RC_URL}/{quote(crn, safe='')}",
+        headers={
+            "Authorization": f"Bearer {iam_token}",
+            "Content-Type": "application/json",
+        },
+        # The API broker expects usage_allocation_seconds as a string.
+        json={"parameters": {"usage_allocation_seconds": str(allocation_seconds)}},
+    )
+    resp.raise_for_status()
+
+
+def prompt_to_verify_set_as_limit_unchecked() -> None:
+    pause(
+        f"In the IQP UI ({IQP_UI_URL}/instances), reload the page, then confirm 'Set as limit' is now\n"
+        f"unchecked. (This is a UI bug: editing allocation should not\n"
+        f"clear the limit checkbox.)"
+    )
+
+
+def is_blocked_by_limit(api_key: str, crn: str) -> bool:
+    """Submit a probe circuit and return True if the usage limit blocked it.
 
     The job is still accepted by the runtime; it's the SDK that emits a
     UserWarning saying "This instance has met its usage limit. Workloads will
@@ -133,7 +146,7 @@ def submit_job(api_key: str, crn: str) -> bool:
         job = Sampler(mode=backend).run([isa_circuit])
 
     blocked = any("usage limit" in str(w.message) for w in caught)
-    status = "BLOCKED by usage limit" if blocked else "queued normally"
+    status = "blocked" if blocked else "queued"
     print(f"Job submitted ({status}). job_id={job.job_id()}")
     return blocked
 
@@ -152,10 +165,48 @@ def main() -> None:
     )
 
     iam_token = get_iam_token(api_key)
-    configure_allocation_in_ui()
-    fetch_instance_limits(iam_token, crn)
-    blocked = submit_job(api_key, crn)
-    print(blocked)
+
+    # --- Initial setup: configure UI, verify values, confirm jobs blocked ---
+    prompt_to_configure_ui()
+    initial = fetch_instance(iam_token, crn)
+    if initial.allocation is None:
+        sys.exit("Invalid setup: instance has no usage_allocation_seconds set.")
+    prompt_to_verify_initial_config(initial)
+    if not is_blocked_by_limit(api_key, crn):
+        sys.exit(
+            "Invalid setup: expected the first job to be blocked by the usage "
+            "limit, but it was queued normally. Re-check the UI configuration."
+        )
+
+
+    # --- Patch allocation by +1s and verify it changed without touching limit ---
+    new_allocation = initial.allocation + 1
+    patch_allocation(iam_token, crn, new_allocation)
+    after = fetch_instance(iam_token, crn)
+
+    if after.allocation != new_allocation:
+        sys.exit(
+            f"Patch failed: expected allocation={new_allocation}, "
+            f"got allocation={after.allocation}."
+        )
+    if after.limit != initial.limit:
+        sys.exit(
+            f"Unexpected limit change: was {initial.limit}, now {after.limit}. "
+            f"PATCHing allocation should not modify the limit."
+        )
+    print("OK: allocation incremented by 1s and limit unchanged.")
+
+    # --- Reproduce the bugs ---
+    prompt_to_verify_set_as_limit_unchecked()
+
+    if is_blocked_by_limit(api_key, crn):
+        sys.exit(
+            "Bug did not reproduce: job is still blocked, as we want."
+        )
+    print(
+        "BUG REPRODUCED: job was not blocked even though the limit field is "
+        "unchanged. Patching allocation incorrectly interefered with the limit."
+    )
 
 
 if __name__ == "__main__":
