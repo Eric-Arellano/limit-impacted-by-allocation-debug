@@ -208,6 +208,8 @@ def main() -> None:
         "unchanged. Patching allocation incorrectly interefered with the limit."
     )
 
+    print(f"\n\n⚠️ Consider canceling the new workloads at {IQP_UI_URL}/workloads?user=me")
+
 
 if __name__ == "__main__":
     try:
