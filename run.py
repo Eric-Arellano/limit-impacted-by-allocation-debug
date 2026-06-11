@@ -7,9 +7,13 @@ See README.md for setup instructions.
 import json
 import os
 import sys
+import warnings
 from urllib.parse import quote
 
 import requests
+from qiskit import QuantumCircuit
+from qiskit.transpiler import generate_preset_pass_manager
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
 
 # ---------------------------------------------------------------------------
 # Config
@@ -18,6 +22,7 @@ import requests
 IAM_URL = "https://iam.test.cloud.ibm.com/identity/token"
 RC_URL = "https://resource-controller.test.cloud.ibm.com/v2/resource_instances"
 IQP_UI_URL = "https://quantum.test.cloud.ibm.com"
+RUNTIME_URL = "https://test.cloud.ibm.com"
 
 
 # ---------------------------------------------------------------------------
@@ -98,13 +103,39 @@ def fetch_instance_limits(iam_token: str, crn: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Step 4: Verify that new jobs are rejected
+# Step 4: Submit a minimal circuit and detect if the usage limit blocked it
 # ---------------------------------------------------------------------------
 
 
-def verify_jobs_rejected(iam_token: str, crn: str) -> None:
-    # TODO: submit a job via Qiskit SDK and confirm it gets rejected.
-    print("\nTODO: submit a job via Qiskit SDK and verify it is rejected.")
+def submit_job(api_key: str, crn: str) -> bool:
+    """Submit a minimal circuit. Returns True if blocked by the usage limit.
+
+    The job is still accepted by the runtime; it's the SDK that emits a
+    UserWarning saying "This instance has met its usage limit. Workloads will
+    not run until time is made available." We catch that warning to detect
+    the blocked state.
+    """
+    print("\nSubmitting a minimal circuit...")
+
+    service = QiskitRuntimeService(token=api_key, instance=crn, url=RUNTIME_URL)
+    backend = service.least_busy(operational=True, simulator=False)
+
+    qc = QuantumCircuit(1)
+    qc.h(0)
+    qc.measure_all()
+
+    isa_circuit = generate_preset_pass_manager(
+        backend=backend, optimization_level=1
+    ).run(qc)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        job = Sampler(mode=backend).run([isa_circuit])
+
+    blocked = any("usage limit" in str(w.message) for w in caught)
+    status = "BLOCKED by usage limit" if blocked else "queued normally"
+    print(f"Job submitted ({status}). job_id={job.job_id()}")
+    return blocked
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +154,8 @@ def main() -> None:
     iam_token = get_iam_token(api_key)
     configure_allocation_in_ui()
     fetch_instance_limits(iam_token, crn)
-    verify_jobs_rejected(iam_token, crn)
+    blocked = submit_job(api_key, crn)
+    print(blocked)
 
 
 if __name__ == "__main__":
