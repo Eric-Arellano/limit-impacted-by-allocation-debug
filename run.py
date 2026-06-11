@@ -24,6 +24,7 @@ IQP_UI_URL = "https://quantum.test.cloud.ibm.com"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def require_env(name: str, hint: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -33,12 +34,15 @@ def require_env(name: str, hint: str) -> str:
 
 def pause(message: str) -> None:
     """Block until the human confirms they've done the manual step."""
-    input(f"\n>>> {message}\n>>> Press Enter to continue... ")
+    lines = message.splitlines() or [""]
+    prefixed = "\n".join(f">>> {line}" for line in lines)
+    input(f"\n{prefixed}\n>>>\n>>> Press Enter to continue... ")
 
 
 # ---------------------------------------------------------------------------
 # Step 1: Exchange API key for IAM bearer token
 # ---------------------------------------------------------------------------
+
 
 def get_iam_token(api_key: str) -> str:
     print("Exchanging API key for IAM bearer token...")
@@ -60,17 +64,19 @@ def get_iam_token(api_key: str) -> str:
 # Step 2: Configure allocation > cycle usage by 5s, with "Set as limit" checked
 # ---------------------------------------------------------------------------
 
+
 def configure_allocation_in_ui() -> None:
     pause(
-        f"In the IQP UI ({IQP_UI_URL}/instances), set the allocation to be > the\n"
-        f">>> 'Cycle usage' by 5 seconds (e.g., if usage is 20s, set to 25s).\n"
-        f">>> Also check 'Set as limit'."
+        f"In the IQP UI ({IQP_UI_URL}/instances), set the allocation to be > the "
+        f"'Cycle usage' by 5 seconds (e.g., if usage is 20s, set to 25s).\n\n"
+        f"Also check 'Set as limit'."
     )
 
 
 # ---------------------------------------------------------------------------
 # Step 3: Verify resource controller reflects the configured allocation/limit
 # ---------------------------------------------------------------------------
+
 
 def fetch_instance_limits(iam_token: str, crn: str) -> dict:
     print("\nFetching instance from resource controller...")
@@ -95,6 +101,7 @@ def fetch_instance_limits(iam_token: str, crn: str) -> dict:
 # Step 4: Verify that new jobs are rejected
 # ---------------------------------------------------------------------------
 
+
 def verify_jobs_rejected(iam_token: str, crn: str) -> None:
     # TODO: submit a job via Qiskit SDK and confirm it gets rejected.
     print("\nTODO: submit a job via Qiskit SDK and verify it is rejected.")
@@ -104,9 +111,14 @@ def verify_jobs_rejected(iam_token: str, crn: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    api_key = require_env("API_KEY", f"Generate one at {IQP_UI_URL} and export API_KEY=...")
-    crn = require_env("CRN", f"Pick an instance at {IQP_UI_URL}/instances and export CRN=...")
+    api_key = require_env(
+        "API_KEY", f"Generate one at {IQP_UI_URL} and export API_KEY=..."
+    )
+    crn = require_env(
+        "CRN", f"Pick an instance at {IQP_UI_URL}/instances and export CRN=..."
+    )
 
     iam_token = get_iam_token(api_key)
     configure_allocation_in_ui()
@@ -115,4 +127,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        pass
