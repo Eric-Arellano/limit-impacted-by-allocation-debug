@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal reproduction script for limit-impacted-by-allocation bug.
+"""Minimal reproduction script for https://github.com/IBM/qauvern/issues/153.
 
 See README.md for setup instructions.
 """
@@ -19,10 +19,12 @@ from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
 # Config
 # ---------------------------------------------------------------------------
 
-IAM_URL = "https://iam.test.cloud.ibm.com/identity/token"
-RC_URL = "https://resource-controller.test.cloud.ibm.com/v2/resource_instances"
-IQP_UI_URL = "https://quantum.test.cloud.ibm.com"
-RUNTIME_URL = "https://test.cloud.ibm.com"
+_SUBDOMAIN = "test.cloud" if os.environ.get("STAGING") else "cloud"
+
+IAM_URL = f"https://iam.{_SUBDOMAIN}.ibm.com/identity/token"
+RC_URL = f"https://resource-controller.{_SUBDOMAIN}.ibm.com/v2/resource_instances"
+IQP_UI_URL = f"https://quantum.{_SUBDOMAIN}.ibm.com"
+RUNTIME_URL = f"https://{_SUBDOMAIN}.ibm.com"
 
 
 # ---------------------------------------------------------------------------

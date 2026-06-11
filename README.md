@@ -12,11 +12,11 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Generate an API key at https://quantum.test.cloud.ibm.com and export it:
+1. Generate an API key at https://quantum.cloud.ibm.com and export it:
    ```bash
    export API_KEY=...
    ```
-2. Pick an instance at https://quantum.test.cloud.ibm.com/instances with low
+2. Pick an instance at https://quantum.cloud.ibm.com/instances with low
    usage (e.g. `client-enablement`) and export its CRN:
    ```bash
    export CRN=...
@@ -25,3 +25,11 @@ pip install -r requirements.txt
    ```bash
    ./run.py
    ```
+
+To run against staging (`test.cloud.ibm.com`) instead of production, set
+`STAGING=1` and use an API key / CRN from
+https://quantum.test.cloud.ibm.com:
+
+```bash
+STAGING=1 ./run.py
+```
