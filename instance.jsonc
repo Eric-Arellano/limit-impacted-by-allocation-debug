@@ -1,0 +1,15 @@
+{
+  "id": "",
+  "parameters": {
+    "backends": null,
+    "instance_limit_seconds": "18",
+    "usage_allocation_seconds": "19"
+  },
+  "extensions": {
+    "backends": ["ANY"],
+    "instance_limit_seconds": 18,
+    "subscription_id": "91b2c828",
+    "subscription_name": "internal",
+    "usage_allocation_seconds": 19
+  }
+}
