@@ -114,6 +114,20 @@ def patch_allocation(iam_token: str, crn: str, allocation_seconds: int) -> None:
     resp.raise_for_status()
 
 
+def patch_limit(iam_token: str, crn: str, limit_seconds: int | None) -> None:
+    print(f"\nPatching limit to {limit_seconds}s via IQP REST API...")
+    resp = requests.put(
+        f"{IQP_UI_URL}/api/v1/instances/configuration",
+        headers={
+            "Authorization": f"Bearer {iam_token}",
+            "Content-Type": "application/json",
+            "Service-CRN": crn,
+        },
+        json={"parameters": {"instance_limit": limit_seconds}},
+    )
+    resp.raise_for_status()
+
+
 def prompt_to_verify_set_as_limit_unchecked() -> None:
     pause(
         f"In the IQP UI ({IQP_UI_URL}/instances), reload the page, then confirm 'Set as limit' is now\n"
@@ -182,24 +196,40 @@ def main() -> None:
 
 
     # --- Patch allocation by +1s and verify it changed without touching limit ---
-    new_allocation = initial.allocation + 1
+    allocation_change = 0
+    new_allocation = initial.allocation + allocation_change
     patch_allocation(iam_token, crn, new_allocation)
-    after = fetch_instance(iam_token, crn)
+    after_allocation_change = fetch_instance(iam_token, crn)
 
-    if after.allocation != new_allocation:
+    if after_allocation_change.allocation != new_allocation:
         sys.exit(
-            f"Patch failed: expected allocation={new_allocation}, "
-            f"got allocation={after.allocation}."
+            f"Allocation patch failed: expected allocation={new_allocation}, "
+            f"got allocation={after_allocation_change.allocation}."
         )
-    if after.limit != initial.limit:
+    if after_allocation_change.limit != initial.limit:
         sys.exit(
-            f"Unexpected limit change: was {initial.limit}, now {after.limit}. "
+            f"Allocation change: Unexpected limit change: was {initial.limit}, now {after_allocation_change.limit}. "
             f"PATCHing allocation should not modify the limit."
         )
-    print("OK: allocation incremented by 1s and limit unchanged.")
+    print(f"OK: allocation incremented by {allocation_change}s and limit unchanged.")
+
+    # --- Programmatically set the limit to its prior value ---
+    patch_limit(iam_token, crn, after_allocation_change.limit)
+    after_limit_change = fetch_instance(iam_token, crn)
+    if after_limit_change.allocation != new_allocation:
+        sys.exit(
+            f"Limit patch failed: expected allocation={new_allocation}, "
+            f"got allocation={after_allocation_change.allocation}."
+        )
+    if after_limit_change.limit != initial.limit:
+        sys.exit(
+            f"Patch failure: Unexpected limit change: was {initial.limit}, now {after_allocation_change.limit}. "
+            f"PATCHing allocation should not modify the limit."
+        )
+    print(f"OK: limit update worked.")
 
     # --- Reproduce the bugs ---
-    prompt_to_verify_set_as_limit_unchecked()
+    # prompt_to_verify_set_as_limit_unchecked()
 
     if is_blocked_by_limit(api_key, crn):
         sys.exit(
